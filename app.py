@@ -751,7 +751,7 @@ else:
 
     with col2:
         st.metric(
-            "Остаток на себестоимость + логистику",
+            "Бюджет на закупку и логистику",
             f"{china_border_budget:,.2f} ₽".replace(",", " ")
         )
 
@@ -980,13 +980,13 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.metric(
-        "Себестоимость, ₽ / шт",
+        "Закупочная цена, ₽ / шт",
         f"{best_price:,.2f} ₽".replace(",", " ")
     )
 
 with col2:
     st.metric(
-        "Себестоимость, ¥ / шт",
+        "Закупочная цена, ¥ / шт",
         f"{cost_cny:,.2f} ¥".replace(",", " ")
     )
 
@@ -1084,12 +1084,12 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.metric(
-        "Себестоимость, ₽ / шт",
+        "Закупочная цена, ₽ / шт",
         f"{max_cost_rub_cargo:,.2f} ₽".replace(",", " ")
     )
 
 with col2:
     st.metric(
-        "Себестоимость, ¥ / шт",
+        "Закупочная цена, ¥ / шт",
         f"{max_cost_cny_cargo:,.2f} ¥".replace(",", " ")
     )
