@@ -60,7 +60,7 @@ if category_input:
         st.warning("Категория не найдена")
 
 # =========================
-# ВЫВОД КАТЕГОРИИ И КОМИССИЙ
+# ВЫВОД КАТЕГОРИИ И КОМИССИЙ (С РУЧНОЙ РЕГУЛИРОВКОЙ)
 # =========================
 
 if result_row is not None:
@@ -69,19 +69,46 @@ if result_row is not None:
 
     st.write(f"**Категория:** {result_row['Предмет']}")
 
+    # --- базовые комиссии из категории ---
+    base_commission_fbw = float(result_row["Склад WB, %"])
+    base_commission_fbs = float(result_row["Склад продавца - везу на склад WB, %"])
+
+    # --- переключатель ИУ ---
+    consider_iu = st.toggle(
+        "Учесть ИУ (−5% от комиссии)",
+        value=False
+    )
+
+    iu_discount = 5.0 if consider_iu else 0.0
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.metric(
-            label="Комиссия FBW",
-            value=f"{result_row['Склад WB, %']} %"
+        commission_fbw = st.number_input(
+            "Комиссия FBW, %",
+            min_value=0.0,
+            max_value=100.0,
+            value=max(base_commission_fbw - iu_discount, 0.0),
+            step=0.1,
+            help="Можно вручную скорректировать комиссию"
         )
 
     with col2:
-        st.metric(
-            label="Комиссия FBS",
-            value=f"{result_row['Склад продавца - везу на склад WB, %']} %"
+        commission_fbs = st.number_input(
+            "Комиссия FBS, %",
+            min_value=0.0,
+            max_value=100.0,
+            value=max(base_commission_fbs - iu_discount, 0.0),
+            step=0.1,
+            help="Можно вручную скорректировать комиссию"
         )
+
+    # --- визуальное подтверждение ---
+    st.caption(
+        f"Базовые комиссии категории: "
+        f"FBW — {base_commission_fbw:.1f}%, "
+        f"FBS — {base_commission_fbs:.1f}%"
+    )
 
 # =========================
 # ВЫКУП ИЗ ВОРОНКИ ПРОДАЖ (ВЗВЕШЕННЫЙ ПО ЗАКАЗАМ)
@@ -792,6 +819,9 @@ import xml.etree.ElementTree as ET
 st.divider()
 st.subheader("Доставка из Китая (чистая поставка)")
 
+# фикс на обработку брака
+DEFECT_PROCESSING_RUB_PER_UNIT = 25.0
+
 # -------------------------
 # БАЗОВЫЕ РАСЧЁТЫ (СКРЫТЫ)
 # -------------------------
@@ -820,6 +850,9 @@ with st.expander("Показать детали расчёта логистик�
     with colv3:
         st.metric("Доля контейнера (66 м³)", f"{share_in_container:.2%}")
 
+    # -------------------------
+    # КУРС USD → RUB
+    # -------------------------
     st.markdown("### Курс USD → RUB")
 
     def get_usd_rub_cbr():
@@ -853,7 +886,9 @@ with st.expander("Показать детали расчёта логистик�
         step=0.1
     )
 
-    # Расходы на контейнер
+    # -------------------------
+    # РАСХОДЫ НА КОНТЕЙНЕР
+    # -------------------------
     st.markdown("### Расходы на контейнер")
 
     freight_usd = st.number_input("Фрахт, $", value=5040.0, step=10.0)
@@ -873,11 +908,35 @@ with st.expander("Показать детали расчёта логистик�
     )
 
     allocated_party_rub = container_total_rub * share_in_container
-    logistics_per_unit_rub = allocated_party_rub / qty_units if qty_units > 0 else 0.0
 
+    logistics_per_unit_base_rub = (
+        allocated_party_rub / qty_units if qty_units > 0 else 0.0
+    )
+
+    logistics_per_unit_rub = (
+        logistics_per_unit_base_rub + DEFECT_PROCESSING_RUB_PER_UNIT
+    )
+
+    # -------------------------
+    # ИТОГИ
+    # -------------------------
     st.markdown("### Итоги")
-    st.write(f"Итого по контейнеру: {container_total_rub:,.0f} ₽".replace(",", " "))
-    st.write(f"Доля расходов партии: {allocated_party_rub:,.0f} ₽".replace(",", " "))
+
+    st.write(
+        f"Итого по контейнеру: {container_total_rub:,.0f} ₽".replace(",", " ")
+    )
+    st.write(
+        f"Доля расходов партии: {allocated_party_rub:,.0f} ₽".replace(",", " ")
+    )
+    st.write(
+        f"Логистика на 1 шт (без брака): {logistics_per_unit_base_rub:.2f} ₽"
+    )
+    st.write(
+        f"Обработка брака: +{DEFECT_PROCESSING_RUB_PER_UNIT:.2f} ₽ / шт"
+    )
+    st.write(
+        f"**Логистика на 1 шт (итого): {logistics_per_unit_rub:.2f} ₽**"
+    )
 
 # -------------------------
 # ГЛАВНАЯ ЦИФРА (ВСЕГДА ВИДНА)
@@ -887,6 +946,7 @@ st.metric(
     "Логистика (чистая поставка) на 1 шт",
     f"{logistics_per_unit_rub:,.2f} ₽".replace(",", " ")
 )
+
 
 # =========================
 # СКРЫТЫЙ РАСЧЁТ СЕБЕСТОИМОСТИ (нужен для best_price)
@@ -900,29 +960,89 @@ if "qty_units" not in locals():
 if "china_border_budget" not in locals() or "logistics_per_unit_rub" not in locals():
     st.stop()
 
+# бюджет под товар + таможню (за 1 шт)
 budget_goods_plus_customs = china_border_budget - logistics_per_unit_rub
+
+# =========================
+# ВЫПЛАТЫ ЭКСПОРТЕРУ (UI)
+# =========================
+
+st.subheader("Выплаты экспортеру (чистая поставка)")
+
+col_e1, col_e2 = st.columns([1, 1])
+
+with col_e1:
+    include_exporter = st.checkbox(
+        "Учитывать выплаты экспортеру",
+        value=False,
+        key="include_exporter"
+    )
+
+with col_e2:
+    factory_tax_pct = st.number_input(
+        "Налог фабрики, %",
+        min_value=1.0,
+        max_value=13.0,
+        value=10.0,
+        step=0.5,
+        disabled=not include_exporter,
+        key="factory_tax_pct"
+    )
+
+# =========================
+# ТАМОЖНЯ И НДС
+# =========================
 
 customs_fee_total_fixed = 2000.0  # ₽ за партию
 
 def customs_per_unit_for_price(unit_price: float) -> float:
     total_goods_value = unit_price * qty_units
+
     duty_total = total_goods_value * 0.05
     vat_total = (total_goods_value + duty_total + customs_fee_total_fixed) * 0.22
+
     return (customs_fee_total_fixed + duty_total + vat_total) / qty_units
+
+
+# =========================
+# ВЫПЛАТЫ ЭКСПОРТЕРУ (ЛОГИКА)
+# =========================
+
+def exporter_cost_per_unit(unit_price: float) -> float:
+    if not include_exporter:
+        return 0.0
+
+    factory_tax = unit_price * factory_tax_pct / 100
+    exporter_fee = (unit_price + factory_tax) * 0.05
+
+    return factory_tax + exporter_fee
+
+
+# =========================
+# ПОИСК МАКС. ЦЕНЫ ЗАКУПКИ
+# =========================
 
 low, high = 0.0, max(budget_goods_plus_customs, 0.0)
 best_price = 0.0
 
 for _ in range(60):
     mid = (low + high) / 2
-    if mid + customs_per_unit_for_price(mid) <= budget_goods_plus_customs:
+
+    total_per_unit = (
+        mid
+        + exporter_cost_per_unit(mid)
+        + customs_per_unit_for_price(mid)
+    )
+
+    if total_per_unit <= budget_goods_plus_customs:
         best_price = mid
         low = mid
     else:
         high = mid
 
+
 # =========================
-# ПЕРЕВОД СЕБЕСТОИМОСТИ В ЮАНИ (CNY)
+# ПЕРЕВОД В ЮАНИ (CNY)
 # =========================
 
 st.divider()
@@ -932,9 +1052,6 @@ import requests
 import xml.etree.ElementTree as ET
 
 def get_cny_rub_cbr():
-    """
-    Возвращает курс CNY→RUB по ЦБ РФ
-    """
     try:
         resp = requests.get(
             "https://www.cbr.ru/scripts/XML_daily.asp",
@@ -973,8 +1090,12 @@ with colfx2:
 
 cny_rub = auto_cny_rub if (use_auto_cny and auto_cny_rub) else cny_rub_manual
 
-# себестоимость в юанях
 cost_cny = best_price / cny_rub if cny_rub > 0 else 0.0
+
+
+# =========================
+# ВЫВОД
+# =========================
 
 col1, col2 = st.columns(2)
 
@@ -988,6 +1109,13 @@ with col2:
     st.metric(
         "Закупочная цена, ¥ / шт",
         f"{cost_cny:,.2f} ¥".replace(",", " ")
+    )
+
+if include_exporter:
+    st.caption(
+        f"Выплаты экспортеру: "
+        f"{exporter_cost_per_unit(best_price):,.2f} ₽ / шт"
+        .replace(",", " ")
     )
 
 # =========================
@@ -1048,7 +1176,11 @@ if "china_border_budget" not in locals() or "logistics_per_unit_rub" not in loca
     st.stop()
 
 # 1️⃣ себестоимость в рублях (карго)
-max_cost_rub_cargo = china_border_budget - logistics_per_unit_rub
+max_cost_rub_cargo = (
+    china_border_budget
+    - logistics_per_unit_rub
+    - DEFECT_PROCESSING_RUB_PER_UNIT
+)
 
 # если ушли в минус — фиксируем
 max_cost_rub_cargo = max(max_cost_rub_cargo, 0.0)
